@@ -14,7 +14,7 @@ import babel.numbers
 class LogParserApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("CTR Trend Chart Generator v1.0")
+        self.root.title("CTR Trend Chart Generator v1.0.1")
 
         # 閥門編號
         self.valve_ids = ["P1-1", "P2-1", "P3-1", "P4-1", "P9-1", "P9-2", "P9-3", "P10-1", "P10-2", "P10-3"]
@@ -26,6 +26,8 @@ class LogParserApp:
         self.start_date = None
         self.end_date = None
         self.log_data = None  # 用於存儲所有解析的數據
+        self.min_time = None
+        self.max_time = None
 
         # 設定GUI元件
         self.setup_gui()
@@ -61,6 +63,7 @@ class LogParserApp:
 
         self.start_date_entry = DateEntry(self.date_selection_frame, date_pattern="yyyy/mm/dd")
         self.start_date_entry.grid(row=0, column=1, padx=5)
+        self.start_date_entry.bind("<<DateEntrySelected>>", lambda e: self.validate_date_range(self.start_date_entry, self.min_time.date(), self.max_time.date()))
         
         self.start_hour_spinbox = tk.Spinbox(self.date_selection_frame, from_=0, to=23, width=3, format="%02.0f")
         self.start_hour_spinbox.grid(row=0, column=2)
@@ -76,6 +79,7 @@ class LogParserApp:
 
         self.end_date_entry = DateEntry(self.date_selection_frame, date_pattern="yyyy/mm/dd")
         self.end_date_entry.grid(row=1, column=1, padx=5)
+        self.end_date_entry.bind("<<DateEntrySelected>>", lambda e: self.validate_date_range(self.end_date_entry, self.min_time.date(), self.max_time.date()))
 
         self.end_hour_spinbox = tk.Spinbox(self.date_selection_frame, from_=0, to=23, width=3, format="%02.0f")
         self.end_hour_spinbox.grid(row=1, column=2)
@@ -93,6 +97,15 @@ class LogParserApp:
         self.export_button = tk.Button(self.root, text="Export to Excel", command=self.export_to_excel, state="disabled")
         self.export_button.pack(pady=10)
 
+    def validate_date_range(self, entry, mindate, maxdate):
+        selected_date = entry.get_date()
+        if selected_date < mindate:
+            messagebox.showwarning("Warning", f"Selected date is before the start of available range ({mindate}). Resetting.")
+            entry.set_date(mindate)
+        elif selected_date > maxdate:
+            messagebox.showwarning("Warning", f"Selected date is after the end of available range ({maxdate}). Resetting.")
+            entry.set_date(maxdate)
+
     def select_log_folder(self):
         # 選擇日誌檔案資料夾
         folder_path = filedialog.askdirectory(title="Select Log Files Folder")
@@ -108,17 +121,23 @@ class LogParserApp:
             messagebox.showerror("Error", "No valid log files found in the selected folder.")
             return
 
-        # 啟用匯出按鈕
+        # 獲取時間範圍
+        self.min_time = min(time_range)
+        self.max_time = max(time_range)
+        self.start_date_entry.config(mindate=self.min_time.date(), maxdate=self.max_time.date())
+        self.end_date_entry.config(mindate=self.min_time.date(), maxdate=self.max_time.date())
+
+        # 提示用戶
+        messagebox.showinfo("Info", f"Log files successfully parsed. \nAvailable time range: {self.min_time} to {self.max_time}.")
         self.export_button.config(state="normal")
-        messagebox.showinfo("Info", "Log files successfully parsed. Please select the time range to export.")
 
     def parse_log_files(self, folder_path):
         # 選擇解析格式
         selected_format = self.selected_format.get()
         if selected_format == "MSC 2.x":
-            regex_pattern = re.compile(r"(\d{4}/\d{2}/\d{2}, \d{2}:\d{2}:\d{2}\.\d+): \(\d+\) PressEvTh\(\): Sent MULTIJET_EVENT_CODE_CURRENT_PRESSURE_HAS_CHANGED\((\d+), (\d+), press=(\d+\.\d+), array=(\d+\.\d+)\)")
+            regex_pattern = re.compile(r"(\d{4}/\d{2}/\d{2}, \d{2}:\d{2}:\d{2}\.\d+): \(\d+\) PressEvTh\(\): Sent MULTIJET_EVENT_CODE_CURRENT_PRESSURE_HAS_CHANGED\((\d+), (\d+), press=(-?\d+\.\d+), array=(-?\d+\.\d+)\)")
         elif selected_format == "MSC 3.x":
-            regex_pattern = re.compile(r"(\d{4}/\d{2}/\d{2}, \d{2}:\d{2}:\d{2}\.\d+): \(.*?\) MultiJetImpl::MCPressCurrentValueChangedEvent\((\d+),(\d+)\), .*?pressure = (\d+\.\d+) mbar.*")
+            regex_pattern = re.compile(r"(\d{4}/\d{2}/\d{2}, \d{2}:\d{2}:\d{2}\.\d+): \(.*?\) MultiJetImpl::MCPressCurrentValueChangedEvent\((\d+),(\d+)\), .*?pressure = (-?\d+\.\d+) mbar.*")
         else:
             raise ValueError("Unsupported log format selected.")
         
@@ -126,7 +145,7 @@ class LogParserApp:
         
         # 用於存儲檔案中的時間戳
         time_stamps = []
-        log_files = [f for f in os.listdir(folder_path) if re.match(r"mjnxtdebug\d{8}\.log", f)]
+        log_files = [f for f in os.listdir(folder_path) if re.match(r"^mjnxtdebug\d{8}\.log$", f)]
         total_files = len(log_files)
 
         # 遍歷資料夾中的日誌檔案
@@ -153,7 +172,7 @@ class LogParserApp:
         if not time_stamps:
             return None, None
 
-        return log_data, time_stamps
+        return log_data, sorted(set(time_stamps))  # 確保時間點是有序且唯一的
 
     def export_to_excel(self):
         # 選擇開始和結束時間
@@ -230,6 +249,7 @@ class LogParserApp:
             # 更新進度條
             self.progress_bar["value"] += 1
             self.root.update_idletasks()
+            #self.progress_bar["maximum"] = 0
 
         # 建立趨勢圖
         chart = LineChart()
@@ -252,7 +272,7 @@ class LogParserApp:
         chart.x_axis.tickLblPos = "low"
 
         # 添加趨勢圖到工作表
-        ws.add_chart(chart, "F2")  # 設定圖表顯示位置
+        ws.add_chart(chart, "N2")  # 設定圖表顯示位置
 
         # 更新進度條（完成繪製圖表步驟）
         self.progress_bar["value"] += 1
@@ -262,8 +282,7 @@ class LogParserApp:
         wb.save(save_path)
 
         # 完成處理後，重置進度條
-        self.progress_bar["value"] = 0
-        self.root.update_idletasks()
+        self.progress_bar["maximum"] = 0
 
 if __name__ == "__main__":
     root = tk.Tk()
